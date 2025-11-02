@@ -47,14 +47,14 @@ def get_database_connection():
             logger.info("Conexão com banco de dados fechada.")
 
 
-class SaldoConfig:
-    """Classe de configuração para processamento do relatório de saldo."""
+class OrdensRFConfig:
+    """Classe de configuração para processamento do relatório de ordens de renda fixa."""
 
     @staticmethod
     def interpret_file_name(file_name):
-        """O arquivo de saldo segue o padrão: saldo_YYYYMMDD_DD-MM-YYYY-HH-MM-SS.xlsx, sendo YYYYMMDD a data dos dados e DD-MM-YYYY-HH-MM-SS a data de geração do arquivo. Para nós, a parte relevante é a data dos dados (YYYYMMDD)."""
+        """O arquivo de ordens de renda fixa segue o padrão: ordens_rf_YYYYMMDD_DD-MM-YYYY-HH-MM-SS.xlsx, sendo YYYYMMDD a data dos dados e DD-MM-YYYY-HH-MM-SS a data de geração do arquivo. Para nós, a parte relevante é a data dos dados (YYYYMMDD)."""
         try:
-            data_dados = file_name.split("_")[1]
+            data_dados = file_name.split("_")[2]
             return datetime.datetime.strptime(data_dados, "%Y%m%d").date()
         except Exception as e:
             logger.error(
@@ -62,7 +62,7 @@ class SaldoConfig:
             )
             return None
 
-    FILE_TO_DB_MAPPING = {"saldo.xlsx": "tb_saldo"}
+    FILE_TO_DB_MAPPING = {"ordens_rf.xlsx": "tb_ordens_rf"}
 
     @staticmethod
     def get_input_folder():
@@ -106,15 +106,6 @@ def should_process_file(
 
         if result is None:
             logger.info(f"Arquivo {file_name} nunca foi processado antes.")
-            cursor.execute(
-                "SELECT data_saldo FROM tb_saldo WHERE data_saldo = ?",
-                (data_dados,),
-            )
-            if data_dados is not None and cursor.fetchone() is not None:
-                logger.info(
-                    f"Dados para a data {data_dados} já existem na tabela. Pulando processamento."
-                )
-                return False
             return True
 
         last_processed_time = result[0]
@@ -232,8 +223,8 @@ def delete_non_finished_data(cursor, conn):
             )
 
         delete_query = """
-            DELETE FROM tb_saldo 
-            WHERE data_saldo >= ? AND data_saldo < ?
+            DELETE FROM tb_ordens_rf
+            WHERE data_ordem >= ? AND data_ordem < ?
         """
 
         cursor.execute(delete_query, (previous_month_start, next_month))
@@ -250,71 +241,85 @@ def delete_non_finished_data(cursor, conn):
         return False
 
 
-def process_saldo(cursor, conn, df, file_modified_time):
-    """Processa dados do arquivo saldo.xlsx."""
+def process_ordens_rf(cursor, conn, df, file_modified_time):
+    """Processa dados do arquivo ordends_rf.xlsx."""
     try:
         column_mapping = {
-            "Conta": "codigo_cliente",
-            "Cliente": "nome_cliente",
-            "Assessor": "codigo_assessor",
-            "D0": "d0",
-            "D+1": "d1",
-            "D+2": "d2",
-            "D+3": "d3",
-            "Total": "saldo_total",
+            "Data": "data_ordem",
+            "Cód. assessor": "codigo_assessor",
+            "Cód. conta": "codigo_cliente",
+            "Tipo ativo": "tipo_ativo",
+            "Ticker": "ticker",
+            "Nome papel": "nome_papel",
+            "Indexador": "indexador",
+            "Vencimento": "data_vencimento",
+            "Tipo operação": "tipo_operacao",
+            "Quantidade": "quantidade",
+            "Volume": "volume",
+            "Receita a dividir": "receita_a_dividir",
+            "PU Cliente": "pu_cliente",
+            "PU TMR": "pu_tmr",
+            "Taxa Cliente": "taxa_cliente",
+            "Taxa TMR": "taxa_tmr",
         }
 
         # Aplica transformações de dados
         for file_col, db_col in column_mapping.items():
             if file_col in df.columns:
-                if db_col in [
-                    "d0",
-                    "d1",
-                    "d2",
-                    "d3",
-                    "saldo_total",
-                ]:
-                    df[file_col] = pd.to_numeric(df[file_col], errors="coerce")
-                elif db_col == "codigo_cliente":
-                    df[file_col] = pd.to_numeric(
-                        df[file_col], errors="coerce"
-                    ).astype("Int64")
-                # Converte Código Assessor para string e prefixa com 'A'
-                elif db_col == "codigo_assessor":
+                # Remove R$, pontos como separadores de milhar e substitui vírgulas por pontos em colunas numéricas
+                if db_col in ["volume", "receita_a_dividir"]:
                     df[file_col] = (
                         df[file_col]
                         .astype(str)
-                        .apply(lambda x: f"A{x}" if pd.notnull(x) else x)
+                        .str.replace("R$", "", regex=False)
+                        .str.replace(".", "", regex=False)
+                        .str.replace(",", ".", regex=False)
                     )
+                    df[file_col] = pd.to_numeric(df[file_col], errors="coerce")
+                elif db_col in ["codigo_cliente", "quantidade"]:
+                    df[file_col] = pd.to_numeric(
+                        df[file_col], errors="coerce"
+                    ).astype("Int64")
+                elif db_col in ["data_ordem", "data_vencimento"]:
+                    df[file_col] = pd.to_datetime(
+                        df[file_col], errors="coerce"
+                    ).dt.date
 
         # Renomeia colunas para corresponder ao esquema do banco de dados
         df = df.rename(columns=column_mapping)
 
-        # Adiciona coluna data_saldo
-        data_saldo = SaldoConfig.interpret_file_name("saldo.xlsx")
-        df["data_saldo"] = data_saldo
+        # Adiciona coluna data_ordem
+        data_ordem = OrdensRFConfig.interpret_file_name("ordens_rf.xlsx")
+        df["data_ordem"] = data_ordem
 
         # Cria tabela se não existir
         create_table_query = """
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_saldo')
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_ordens_rf')
         BEGIN
-            CREATE TABLE tb_saldo (
+            CREATE TABLE tb_ordens_rf (
                 id INT IDENTITY(1,1) PRIMARY KEY,
-                codigo_cliente INT,
-                nome_cliente NVARCHAR(255),
+                data_ordem DATE,
                 codigo_assessor NVARCHAR(50),
-                d0 DECIMAL(18,2),
-                d1 DECIMAL(18,2),
-                d2 DECIMAL(18,2),
-                d3 DECIMAL(18,2),
-                saldo_total DECIMAL(18,2),
-                data_saldo DATETIME
+                codigo_cliente INT,
+                tipo_ativo NVARCHAR(100),
+                ticker NVARCHAR(50),
+                nome_papel NVARCHAR(255),
+                indexador NVARCHAR(100),
+                data_vencimento DATE,
+                tipo_operacao NVARCHAR(50),
+                quantidade INT,
+                volume DECIMAL(18, 4),
+                receita_a_dividir DECIMAL(18, 4),
+                pu_cliente DECIMAL(18, 4),
+                pu_tmr DECIMAL(18, 4),
+                taxa_cliente DECIMAL(18, 4),
+                taxa_tmr DECIMAL(18, 4)
             )
         END
         """
         cursor.execute(create_table_query)
         conn.commit()
-        logger.info("Tabela tb_saldo criada/verificada com sucesso.")
+        logger.info("Tabela tb_ordens_rf criada/verificada com sucesso.")
 
         # Limpa apenas os dados do mês atual antes de inserir novos dados
         if not delete_non_finished_data(cursor, conn):
@@ -337,7 +342,7 @@ def process_saldo(cursor, conn, df, file_modified_time):
 
             if columns:
                 insert_query = f"""
-                INSERT INTO tb_saldo ({", ".join(columns)})
+                INSERT INTO tb_ordens_rf ({", ".join(columns)})
                 VALUES ({", ".join(placeholders)})
                 """
                 cursor.execute(insert_query, values)
@@ -345,12 +350,12 @@ def process_saldo(cursor, conn, df, file_modified_time):
 
         conn.commit()
         logger.info(
-            f"Processamento do relatório de saldo concluído: {records_inserted} registros inseridos."
+            f"Processamento do relatório de ordens renda fixa concluído: {records_inserted} registros inseridos."
         )
         return True
 
     except Exception as e:
-        logger.error(f"Erro ao processar relatório de saldo: {e}")
+        logger.error(f"Erro ao processar relatório de ordens renda fixa: {e}")
         conn.rollback()
         return False
 
@@ -384,8 +389,8 @@ def process_file(
             return False
 
         # Processa com base no tipo de arquivo
-        if file_name == "saldo.xlsx":
-            return process_saldo(cursor, conn, df, file_modified_time)
+        if file_name == "ordens_rf.xlsx":
+            return process_ordens_rf(cursor, conn, df, file_modified_time)
         else:
             logger.warning(f"Tipo de arquivo não reconhecido: {file_name}")
             return False
@@ -399,7 +404,7 @@ def main():
     """Função principal de execução."""
     try:
         # Obtém pasta de entrada
-        input_folder = SaldoConfig.get_input_folder()
+        input_folder = OrdensRFConfig.get_input_folder()
 
         # Processa arquivos com conexão de banco de dados
         with get_database_connection() as conn:
@@ -409,7 +414,7 @@ def main():
             for (
                 file_name,
                 table_name,
-            ) in SaldoConfig.FILE_TO_DB_MAPPING.items():
+            ) in OrdensRFConfig.FILE_TO_DB_MAPPING.items():
                 file_path = input_folder / file_name
 
                 # Verifica data de modificação
@@ -421,7 +426,7 @@ def main():
                     continue
 
                 # Interpreta o nome do arquivo para obter data_dados
-                data_dados = SaldoConfig.interpret_file_name(file_name)
+                data_dados = OrdensRFConfig.interpret_file_name(file_name)
 
                 # Verifica se o arquivo precisa ser processado
                 if not should_process_file(
