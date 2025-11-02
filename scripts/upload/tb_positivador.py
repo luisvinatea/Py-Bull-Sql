@@ -123,9 +123,15 @@ def should_process_file(
 
         # Converter string para datetime se necessário
         if isinstance(last_processed_time, str):
-            last_processed_time = datetime.datetime.strptime(
-                last_processed_time, "%Y-%m-%d %H:%M:%S"
-            )
+            # Tentar parsing com microsegundos primeiro, depois sem
+            try:
+                last_processed_time = datetime.datetime.strptime(
+                    last_processed_time, "%Y-%m-%d %H:%M:%S.%f"
+                )
+            except ValueError:
+                last_processed_time = datetime.datetime.strptime(
+                    last_processed_time, "%Y-%m-%d %H:%M:%S"
+                )
 
         time_diff = abs(
             (current_modified_time - last_processed_time).total_seconds()
@@ -252,6 +258,10 @@ def delete_non_finished_data(cursor, conn, data_dados):
         # Converter datetime para string format para comparação no SQLite
         month_start_str = month_start.strftime("%Y-%m-%d %H:%M:%S")
         next_month_str = next_month.strftime("%Y-%m-%d %H:%M:%S")
+
+        logger.info(
+            f"Tentando deletar registros entre {month_start_str} e {next_month_str}"
+        )
 
         cursor.execute(delete_query, (month_start_str, next_month_str))
         deleted_count = cursor.rowcount
@@ -380,8 +390,10 @@ def process_positivador(cursor, conn, df, file_modified_time, data_dados=None):
                                     days=value
                                 )
                             else:
-                                # Se já é datetime ou string, tenta fazer parse
-                                return pd.to_datetime(value, errors="coerce")
+                                # Se já é datetime ou string, tenta fazer parse (Brazilian format DD/MM/YYYY)
+                                return pd.to_datetime(
+                                    value, errors="coerce", dayfirst=True
+                                )
                         except Exception:
                             return None
 

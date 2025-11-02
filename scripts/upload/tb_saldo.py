@@ -123,9 +123,15 @@ def should_process_file(
 
         # Convert string para datetime se necessário
         if isinstance(last_processed_time, str):
-            last_processed_time = datetime.datetime.strptime(
-                last_processed_time, "%Y-%m-%d %H:%M:%S"
-            )
+            # Tentar parsing com microsegundos primeiro, depois sem
+            try:
+                last_processed_time = datetime.datetime.strptime(
+                    last_processed_time, "%Y-%m-%d %H:%M:%S.%f"
+                )
+            except ValueError:
+                last_processed_time = datetime.datetime.strptime(
+                    last_processed_time, "%Y-%m-%d %H:%M:%S"
+                )
 
         time_diff = abs(
             (current_modified_time - last_processed_time).total_seconds()
