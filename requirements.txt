@@ -6,9 +6,9 @@ pandas==2.3.0
 numpy==2.3.1
 
 # Conectividade com banco de dados
-sqlalchemy==2.0.41
-mysql-connector-python==9.4.0
-pyodbc==5.2.0
+# SQLite is built-in with Python, no need for pyodbc
+# sqlalchemy==2.0.41  # Optional for advanced ORM features
+# mysql-connector-python==9.4.0  # Not needed for SQLite
 
 # Suporte a arquivos Excel
 openpyxl==3.1.5
