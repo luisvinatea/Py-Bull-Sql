@@ -121,7 +121,7 @@ def should_process_file(
 
         last_processed_time = result[0]
 
-        # Convert string para datetime se necessário
+        # Converte string para datetime se necessário
         if isinstance(last_processed_time, str):
             # Tentar parsing com microsegundos primeiro, depois sem
             try:
@@ -207,15 +207,32 @@ def get_identity_column(cursor, table_name):
         return None
 
 
-def delete_non_finished_data(cursor, conn):
+def delete_non_finished_data(cursor, conn, data_dados):
     """Se data dos dados for diferente do fechamento do mês atual, substituímos os dados do mês atual. Como os relatórios são extraídos em D+2, pode acontecer de no começo do mês termos dados do mês anterior, especificamente se estivermos nos primeiros dois dias úteis do mês. Nesse caso, continuamos atualizando o mês anterior. Uma vez que os dados do mês anterior são finalizados, começamos anexando os dados do mês atual e assim sucessivamente."""
     try:
-        current_date = datetime.datetime.now()
+        # Use data_dados to determine which month to delete
+        if data_dados is None:
+            logger.warning("data_dados is None, usando data atual")
+            data_date = datetime.datetime.now()
+        else:
+            # Convert date to datetime
+            data_date = datetime.datetime.combine(
+                data_dados, datetime.time.min
+            )
 
-        # Calcular próximo mês
-        if current_date.month == 12:
-            next_month = current_date.replace(
-                year=current_date.year + 1,
+        # Calcular início do mês dos dados
+        month_start = data_date.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+        # Calcular início do próximo mês
+        if data_date.month == 12:
+            next_month = data_date.replace(
+                year=data_date.year + 1,
                 month=1,
                 day=1,
                 hour=0,
@@ -224,29 +241,8 @@ def delete_non_finished_data(cursor, conn):
                 microsecond=0,
             )
         else:
-            next_month = current_date.replace(
-                month=current_date.month + 1,
-                day=1,
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-
-        # Calcular início do mês anterior
-        if current_date.month == 1:
-            previous_month_start = current_date.replace(
-                year=current_date.year - 1,
-                month=12,
-                day=1,
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-        else:
-            previous_month_start = current_date.replace(
-                month=current_date.month - 1,
+            next_month = data_date.replace(
+                month=data_date.month + 1,
                 day=1,
                 hour=0,
                 minute=0,
@@ -260,15 +256,15 @@ def delete_non_finished_data(cursor, conn):
         """
 
         # Converte datetime para string para comparação no SQLite
-        previous_month_str = previous_month_start.strftime("%Y-%m-%d %H:%M:%S")
+        month_start_str = month_start.strftime("%Y-%m-%d %H:%M:%S")
         next_month_str = next_month.strftime("%Y-%m-%d %H:%M:%S")
 
-        cursor.execute(delete_query, (previous_month_str, next_month_str))
+        cursor.execute(delete_query, (month_start_str, next_month_str))
         deleted_count = cursor.rowcount
         conn.commit()
 
         logger.info(
-            f"Removidos {deleted_count:,} registros não concluídos da tabela no banco de dados."
+            f"Removidos {deleted_count:,} registros do mês {data_date.strftime('%Y-%m')} da tabela no banco de dados."
         )
         return True
 
@@ -277,7 +273,7 @@ def delete_non_finished_data(cursor, conn):
         return False
 
 
-def process_saldo(cursor, conn, df, file_modified_time):
+def process_saldo(cursor, conn, df, file_modified_time, data_dados=None):
     """Processa dados do arquivo saldo.xlsx."""
     try:
         column_mapping = {
@@ -317,9 +313,15 @@ def process_saldo(cursor, conn, df, file_modified_time):
         # Renomeia colunas para corresponder ao esquema do banco de dados
         df = df.rename(columns=column_mapping)
 
-        # Adiciona coluna data_saldo
-        data_saldo = SaldoConfig.interpret_file_name("saldo.xlsx")
-        df["data_saldo"] = data_saldo
+        # Adiciona coluna data_saldo usando data_dados passado como parâmetro
+        # Converte data para string para SQLite
+        if data_dados:
+            data_saldo_str = data_dados.strftime("%Y-%m-%d")
+            logger.info(f"data_saldo será definido como: {data_saldo_str}")
+        else:
+            data_saldo_str = None
+            logger.warning("data_dados é None, data_saldo será NULL")
+        df["data_saldo"] = data_saldo_str
 
         # Cria tabela se não existir
         create_table_query = """
@@ -341,7 +343,7 @@ def process_saldo(cursor, conn, df, file_modified_time):
         logger.info("Tabela tb_saldo criada/verificada com sucesso.")
 
         # Limpa apenas os dados do mês atual antes de inserir novos dados
-        if not delete_non_finished_data(cursor, conn):
+        if not delete_non_finished_data(cursor, conn, data_dados):
             return False
 
         # Prepara dados para inserção
@@ -365,6 +367,12 @@ def process_saldo(cursor, conn, df, file_modified_time):
                         values.append(value.strftime("%Y-%m-%d %H:%M:%S"))
                     else:
                         values.append(value)
+
+            # Adiciona coluna data_saldo que não está no column_mapping
+            if "data_saldo" in df.columns:
+                columns.append("data_saldo")
+                placeholders.append("?")
+                values.append(row["data_saldo"])
 
             if columns:
                 insert_query = f"""
@@ -406,6 +414,7 @@ def process_file(
     table_name,
     file_path,
     file_modified_time,
+    data_dados=None,
 ):
     """Processa um único arquivo com base em seu tipo."""
     try:
@@ -416,7 +425,9 @@ def process_file(
 
         # Processa com base no tipo de arquivo
         if file_name == "saldo.xlsx":
-            return process_saldo(cursor, conn, df, file_modified_time)
+            return process_saldo(
+                cursor, conn, df, file_modified_time, data_dados
+            )
         else:
             logger.warning(f"Tipo de arquivo não reconhecido: {file_name}")
             return False
@@ -494,6 +505,7 @@ def main():
                     table_name,
                     file_path,
                     current_modified_time,
+                    data_dados,
                 ):
                     # Atualiza rastreamento
                     update_file_tracking(
