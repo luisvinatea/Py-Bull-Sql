@@ -1,0 +1,59 @@
+# JB3 Sistema de Processamento e Espelhamento de Dados
+# Dependências principais do projeto
+
+# Bibliotecas principais de processamento de dados
+pandas==2.3.0
+numpy==2.3.1
+
+# Conectividade com banco de dados
+sqlalchemy==2.0.41
+mysql-connector-python==9.4.0
+pyodbc==5.2.0
+
+# Suporte a arquivos Excel
+openpyxl==3.1.5
+
+# Gerenciamento de variáveis de ambiente
+python-dotenv==1.1.1
+
+# Utilitários de data e hora
+python-dateutil==2.9.0.post0
+
+# Barra de progresso para operações demoradas
+tqdm==4.66.5
+pytz==2025.2
+
+# Web scraping e requisições (se usado em alguns scripts)
+requests==2.32.4
+beautifulsoup4==4.13.4
+
+# Automação Excel (se usado com xlwings)
+xlwings==0.33.15
+
+# Dados financeiros (se usado para dados financeiros)
+yfinance==0.2.65
+
+# Visualização de dados (se usado para relatórios)
+matplotlib==3.10.3
+seaborn==0.13.2
+
+# ORM de banco de dados alternativo (se usado)
+peewee==3.18.1
+
+# Automação e controle de navegador (se usado)
+selenium==4.34.2
+
+# Suporte assíncrono
+trio==0.30.0
+
+# Formatação de dados tabulares
+tabulate==0.9.0
+
+# Manipulação de caminhos (incluído no Python 3.4+ mas especificado para clareza)
+# pathlib faz parte da biblioteca padrão
+
+# Módulos da biblioteca padrão utilizados (não necessitam instalação via pip):
+# - os
+# - logging
+# - sys
+# - datetime
