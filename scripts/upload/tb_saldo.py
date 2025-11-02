@@ -6,6 +6,7 @@ import logging
 from dotenv import load_dotenv
 import datetime
 from contextlib import contextmanager
+import glob
 
 # Configurar logging
 logging.basicConfig(
@@ -175,8 +176,8 @@ def get_identity_column(cursor, table_name):
 
         # Procura pela coluna PRIMARY KEY com AUTOINCREMENT (pk=1)
         for col in columns:
-            if col[5] == 1:  # col[5] is the 'pk' field
-                identity_col = col[1]  # col[1] is the column name
+            if col[5] == 1:
+                identity_col = col[1]
                 logger.info(
                     f"Coluna IDENTITY da tabela {table_name}: {identity_col}"
                 )
@@ -416,7 +417,27 @@ def main():
                 file_name,
                 table_name,
             ) in SaldoConfig.FILE_TO_DB_MAPPING.items():
-                file_path = input_folder / file_name
+                # Remove a extensão do nome do arquivo base
+                base_name = file_name.replace(".xlsx", "")
+
+                # Procura por arquivos que correspondem ao padrão base_name_*_*.xlsx
+                # Exemplo: saldo_20241102_02-11-2024-10-30-45.xlsx
+                pattern = str(input_folder / f"{base_name}_*_*.xlsx")
+                matching_files = glob.glob(pattern)
+
+                if not matching_files:
+                    logger.warning(
+                        f"Nenhum arquivo encontrado para o padrão: {pattern}"
+                    )
+                    continue
+
+                # Ordena por data de modificação (mais recente primeiro)
+                matching_files.sort(
+                    key=lambda x: os.path.getmtime(x), reverse=True
+                )
+                file_path = Path(matching_files[0])
+
+                logger.info(f"Arquivo encontrado: {file_path.name}")
 
                 # Verifica data de modificação
                 current_modified_time = get_file_last_modified(file_path)
@@ -427,12 +448,12 @@ def main():
                     continue
 
                 # Interpreta o nome do arquivo para obter data_dados
-                data_dados = SaldoConfig.interpret_file_name(file_name)
+                data_dados = SaldoConfig.interpret_file_name(file_path.name)
 
                 # Verifica se o arquivo precisa ser processado
                 if not should_process_file(
                     cursor,
-                    file_name,
+                    file_path.name,
                     table_name,
                     current_modified_time,
                     data_dados,
@@ -454,14 +475,18 @@ def main():
                     update_file_tracking(
                         cursor,
                         conn,
-                        file_name,
+                        file_path.name,
                         table_name,
                         current_modified_time,
                     )
                     processed_count += 1
-                    logger.info(f"Arquivo {file_name} processado com sucesso.")
+                    logger.info(
+                        f"Arquivo {file_path.name} processado com sucesso."
+                    )
                 else:
-                    logger.error(f"Falha ao processar arquivo {file_name}")
+                    logger.error(
+                        f"Falha ao processar arquivo {file_path.name}"
+                    )
 
             logger.info(
                 f"Processamento concluído. {processed_count} arquivos processados."
