@@ -12,6 +12,7 @@ numpy==2.3.1
 
 # Suporte a arquivos Excel
 openpyxl==3.1.5
+xlsxwriter==3.1.5
 
 # Gerenciamento de variáveis de ambiente
 python-dotenv==1.1.1
