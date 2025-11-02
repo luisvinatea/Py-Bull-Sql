@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS tb_profissao (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profissao TEXT
+)

@@ -1,11 +1,10 @@
-DROP VIEW IF EXISTS vw_aai;
+DROP VIEW IF EXISTS vw_escritorio;
 
-CREATE VIEW vw_aai AS
+CREATE VIEW vw_escritorio AS
 WITH
     positivador_agg AS (
         SELECT
             DATE(data_posicao, 'start of month') AS data_referencia,
-            codigo_assessor,
             -- Custodia
             SUM(COALESCE(net_em_m, 0)) AS net_total,
             -- Custodia por categorias
@@ -67,46 +66,38 @@ WITH
         FROM
             tb_positivador
         GROUP BY
-            DATE(data_posicao, 'start of month'),
-            codigo_assessor
+            DATE(data_posicao, 'start of month')
     ),
     ordens_rf_agg AS (
         SELECT
             DATE(data_ordem, 'start of month') AS data_referencia,
-            codigo_assessor,
             ABS(SUM(COALESCE(volume, 0))) AS volume_operado_rf
         FROM
             tb_ordens_rf
         GROUP BY
-            DATE(data_ordem, 'start of month'),
-            codigo_assessor
+            DATE(data_ordem, 'start of month')
     ),
     ordens_rv_agg AS (
         SELECT
             DATE(data_ordem, 'start of month') AS data_referencia,
-            codigo_assessor,
             ABS(SUM(COALESCE(volume, 0))) AS volume_operado_rv
         FROM
             tb_ordens_rv
         GROUP BY
-            DATE(data_ordem, 'start of month'),
-            codigo_assessor
+            DATE(data_ordem, 'start of month')
     ),
     saldo_agg AS (
         SELECT
             DATE(data_saldo, 'start of month') AS data_referencia,
-            codigo_assessor,
             SUM(COALESCE(saldo_total, 0)) AS saldo_cliente_total,
             AVG(COALESCE(saldo_total, 0)) AS saldo_cliente_medio
         FROM
             tb_saldo
         GROUP BY
-            DATE(data_saldo, 'start of month'),
-            codigo_assessor
+            DATE(data_saldo, 'start of month')
     )
 SELECT
     p.data_referencia,
-    p.codigo_assessor,
     -- Custodia
     p.net_total,
     p.net_renda_fixa,
@@ -149,8 +140,5 @@ SELECT
 FROM
     positivador_agg p
     LEFT JOIN ordens_rf_agg rf ON p.data_referencia = rf.data_referencia
-    AND p.codigo_assessor = rf.codigo_assessor
     LEFT JOIN ordens_rv_agg rv ON p.data_referencia = rv.data_referencia
-    AND p.codigo_assessor = rv.codigo_assessor
-    LEFT JOIN saldo_agg s ON p.data_referencia = s.data_referencia
-    AND p.codigo_assessor = s.codigo_assessor;
+    LEFT JOIN saldo_agg s ON p.data_referencia = s.data_referencia;
