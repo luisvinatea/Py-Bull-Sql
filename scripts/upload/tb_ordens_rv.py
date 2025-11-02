@@ -111,6 +111,13 @@ def should_process_file(
             return True
 
         last_processed_time = result[0]
+
+        # Convert string para datetime se necessário
+        if isinstance(last_processed_time, str):
+            last_processed_time = datetime.datetime.strptime(
+                last_processed_time, "%Y-%m-%d %H:%M:%S"
+            )
+
         time_diff = abs(
             (current_modified_time - last_processed_time).total_seconds()
         )
