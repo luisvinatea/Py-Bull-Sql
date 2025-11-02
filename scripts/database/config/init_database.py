@@ -27,7 +27,7 @@ def get_database_path():
     # Converte para caminho absoluto se for relativo
     if not os.path.isabs(db_path):
         script_dir = Path(__file__).resolve().parent
-        project_root = script_dir.parents[1]
+        project_root = script_dir.parents[2]
         db_path = project_root / db_path
 
     return db_path
