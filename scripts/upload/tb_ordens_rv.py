@@ -47,12 +47,12 @@ def get_database_connection():
             logger.info("Conexão com banco de dados fechada.")
 
 
-class OrdensRFConfig:
-    """Classe de configuração para processamento do relatório de ordens de renda fixa."""
+class OrdensRVConfig:
+    """Classe de configuração para processamento do relatório de ordens de renda variável."""
 
     @staticmethod
     def interpret_file_name(file_name):
-        """O arquivo de ordens de renda fixa segue o padrão: ordens_rf_YYYYMMDD_DD-MM-YYYY-HH-MM-SS.xlsx, sendo YYYYMMDD a data dos dados e DD-MM-YYYY-HH-MM-SS a data de geração do arquivo. Para nós, a parte relevante é a data dos dados (YYYYMMDD)."""
+        """O arquivo de ordens de renda variável segue o padrão: ordens_rv_YYYYMMDD_DD-MM-YYYY-HH-MM-SS.xlsx, sendo YYYYMMDD a data dos dados e DD-MM-YYYY-HH-MM-SS a data de geração do arquivo. Para nós, a parte relevante é a data dos dados (YYYYMMDD)."""
         try:
             data_dados = file_name.split("_")[2]
             return datetime.datetime.strptime(data_dados, "%Y%m%d").date()
@@ -62,7 +62,7 @@ class OrdensRFConfig:
             )
             return None
 
-    FILE_TO_DB_MAPPING = {"ordens_rf.xlsx": "tb_ordens_rf"}
+    FILE_TO_DB_MAPPING = {"ordens_rv.xlsx": "tb_ordens_rv"}
 
     @staticmethod
     def get_input_folder():
@@ -223,7 +223,7 @@ def delete_non_finished_data(cursor, conn):
             )
 
         delete_query = """
-            DELETE FROM tb_ordens_rf
+            DELETE FROM tb_ordens_rv
             WHERE data_ordem >= ? AND data_ordem < ?
         """
 
@@ -241,33 +241,31 @@ def delete_non_finished_data(cursor, conn):
         return False
 
 
-def process_ordens_rf(cursor, conn, df, file_modified_time):
-    """Processa dados do arquivo ordends_rf.xlsx."""
+def process_ordens_rv(cursor, conn, df, file_modified_time):
+    """Processa dados do arquivo ordens_rv.xlsx."""
     try:
         column_mapping = {
+            "Conta": "codigo_cliente",
+            "Suitability": "suitability",
+            "Cod A": "codigo_assessor",
+            "Matriz": "matriz",
+            "Ativo": "ticker",
+            "Qtd": "quantidade",
+            "Corretagem": "receita_corretagem",
+            "Volume Negociado": "volume",
+            "Produto": "tipo_produto",
+            "Canal": "canal",
+            "Tipo de Corretagem": "tipo_corretagem",
+            "Mercado": "mercado",
+            "Lado": "lado",
             "Data": "data_ordem",
-            "Cód. assessor": "codigo_assessor",
-            "Cód. conta": "codigo_cliente",
-            "Tipo ativo": "tipo_ativo",
-            "Ticker": "ticker",
-            "Nome papel": "nome_papel",
-            "Indexador": "indexador",
-            "Vencimento": "data_vencimento",
-            "Tipo operação": "tipo_operacao",
-            "Quantidade": "quantidade",
-            "Volume": "volume",
-            "Receita a dividir": "receita_a_dividir",
-            "PU Cliente": "pu_cliente",
-            "PU TMR": "pu_tmr",
-            "Taxa Cliente": "taxa_cliente",
-            "Taxa TMR": "taxa_tmr",
         }
 
         # Aplica transformações de dados
         for file_col, db_col in column_mapping.items():
             if file_col in df.columns:
                 # Remove R$, pontos como separadores de milhar e substitui vírgulas por pontos em colunas numéricas
-                if db_col in ["volume", "receita_a_dividir"]:
+                if db_col in ["volume", "receita_corretagem"]:
                     df[file_col] = (
                         df[file_col]
                         .astype(str)
@@ -280,7 +278,7 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
                     df[file_col] = pd.to_numeric(
                         df[file_col], errors="coerce"
                     ).astype("Int64")
-                elif db_col in ["data_ordem", "data_vencimento"]:
+                elif db_col == "data_ordem":
                     df[file_col] = pd.to_datetime(
                         df[file_col], errors="coerce"
                     ).dt.date
@@ -290,32 +288,30 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
 
         # Cria tabela se não existir
         create_table_query = """
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_ordens_rf')
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_ordens_rv')
         BEGIN
-            CREATE TABLE tb_ordens_rf (
+            CREATE TABLE tb_ordens_rv (
                 id INT IDENTITY(1,1) PRIMARY KEY,
-                data_ordem DATE,
-                codigo_assessor NVARCHAR(50),
-                codigo_cliente INT,
-                tipo_ativo NVARCHAR(100),
-                ticker NVARCHAR(50),
-                nome_papel NVARCHAR(255),
-                indexador NVARCHAR(100),
-                data_vencimento DATE,
-                tipo_operacao NVARCHAR(50),
-                quantidade INT,
-                volume DECIMAL(18, 4),
-                receita_a_dividir DECIMAL(18, 4),
-                pu_cliente DECIMAL(18, 4),
-                pu_tmr DECIMAL(18, 4),
-                taxa_cliente DECIMAL(18, 4),
-                taxa_tmr DECIMAL(18, 4)
+                codigo_cliente INT NULL,
+                suitability INT NULL,
+                codigo_assessor INT NULL,
+                matriz VARCHAR(100) NULL,
+                ticker VARCHAR(50) NULL,
+                quantidade INT NULL,
+                receita_corretagem DECIMAL(18, 4) NULL,
+                volume DECIMAL(18, 4) NULL,
+                tipo_produto VARCHAR(100) NULL,
+                canal VARCHAR(100) NULL,
+                tipo_corretagem VARCHAR(100) NULL,
+                mercado VARCHAR(100) NULL,
+                lado VARCHAR(50) NULL,
+                data_ordem DATE NULL
             )
         END
         """
         cursor.execute(create_table_query)
         conn.commit()
-        logger.info("Tabela tb_ordens_rf criada/verificada com sucesso.")
+        logger.info("Tabela tb_ordens_rv criada/verificada com sucesso.")
 
         # Limpa apenas os dados do mês atual antes de inserir novos dados
         if not delete_non_finished_data(cursor, conn):
@@ -338,7 +334,7 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
 
             if columns:
                 insert_query = f"""
-                INSERT INTO tb_ordens_rf ({", ".join(columns)})
+                INSERT INTO tb_ordens_rv ({", ".join(columns)})
                 VALUES ({", ".join(placeholders)})
                 """
                 cursor.execute(insert_query, values)
@@ -346,12 +342,14 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
 
         conn.commit()
         logger.info(
-            f"Processamento do relatório de ordens renda fixa concluído: {records_inserted} registros inseridos."
+            f"Processamento do relatório de ordens renda variável concluído: {records_inserted} registros inseridos."
         )
         return True
 
     except Exception as e:
-        logger.error(f"Erro ao processar relatório de ordens renda fixa: {e}")
+        logger.error(
+            f"Erro ao processar relatório de ordens renda variável: {e}"
+        )
         conn.rollback()
         return False
 
@@ -385,8 +383,8 @@ def process_file(
             return False
 
         # Processa com base no tipo de arquivo
-        if file_name == "ordens_rf.xlsx":
-            return process_ordens_rf(cursor, conn, df, file_modified_time)
+        if file_name == "ordens_rv.xlsx":
+            return process_ordens_rv(cursor, conn, df, file_modified_time)
         else:
             logger.warning(f"Tipo de arquivo não reconhecido: {file_name}")
             return False
@@ -400,7 +398,7 @@ def main():
     """Função principal de execução."""
     try:
         # Obtém pasta de entrada
-        input_folder = OrdensRFConfig.get_input_folder()
+        input_folder = OrdensRVConfig.get_input_folder()
 
         # Processa arquivos com conexão de banco de dados
         with get_database_connection() as conn:
@@ -410,7 +408,7 @@ def main():
             for (
                 file_name,
                 table_name,
-            ) in OrdensRFConfig.FILE_TO_DB_MAPPING.items():
+            ) in OrdensRVConfig.FILE_TO_DB_MAPPING.items():
                 file_path = input_folder / file_name
 
                 # Verifica data de modificação
@@ -422,7 +420,7 @@ def main():
                     continue
 
                 # Interpreta o nome do arquivo para obter data_dados
-                data_dados = OrdensRFConfig.interpret_file_name(file_name)
+                data_dados = OrdensRVConfig.interpret_file_name(file_name)
 
                 # Verifica se o arquivo precisa ser processado
                 if not should_process_file(
