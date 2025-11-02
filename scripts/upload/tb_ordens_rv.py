@@ -337,7 +337,14 @@ def process_ordens_rv(cursor, conn, df, file_modified_time):
                     columns.append(db_col)
                     placeholders.append("?")
                     value = row[db_col]
-                    values.append(None if pd.isna(value) else value)
+
+                    # Converte pandas Timestamp para string devido a limitações do SQLite
+                    if pd.isna(value):
+                        values.append(None)
+                    elif isinstance(value, (pd.Timestamp, datetime.datetime)):
+                        values.append(value.strftime("%Y-%m-%d %H:%M:%S"))
+                    else:
+                        values.append(value)
 
             if columns:
                 insert_query = f"""
