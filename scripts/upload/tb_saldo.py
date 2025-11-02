@@ -25,7 +25,7 @@ def get_database_connection():
     """Gerenciador de contexto para conexões de banco de dados com limpeza adequada de recursos."""
 
     # Conexão com SQLite
-    db_path = os.getenv("DB_PATH", "data/database.db")
+    db_path = os.getenv("DB_PATH", "data/db/database.db")
 
     # Garantir que o diretório exista
     db_dir = os.path.dirname(db_path)

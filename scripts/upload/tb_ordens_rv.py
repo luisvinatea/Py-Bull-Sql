@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from pathlib import Path
-import pyodbc
+import sqlite3
 import logging
 from dotenv import load_dotenv
 import datetime
@@ -24,19 +24,20 @@ logger.info("Variáveis de ambiente carregadas com sucesso.")
 def get_database_connection():
     """Gerenciador de contexto para conexões de banco de dados com limpeza adequada de recursos."""
 
-    # Exemplo para SQL Server usando pyodbc (substituir pelo adequado conforme o banco de dados)
-    conn_str = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={os.getenv('DB_SERVER')};"
-        f"DATABASE={os.getenv('DB_DATABASE')};"
-        f"UID={os.getenv('DB_USERNAME')};"
-        f"PWD={os.getenv('DB_PASSWORD')};"
-    )
+    # SQLite connection
+    db_path = os.getenv("DB_PATH", "data/db/database.db")
+
+    # Ensure directory exists
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir)
 
     conn = None
     try:
-        conn = pyodbc.connect(conn_str)
-        logger.info("Conexão com o banco de dados estabelecida com sucesso.")
+        conn = sqlite3.connect(db_path)
+        logger.info(
+            f"Conexão com o banco de dados SQLite estabelecida: {db_path}"
+        )
         yield conn
     except Exception as e:
         logger.error(f"Erro ao conectar com o banco de dados: {e}")
@@ -134,7 +135,7 @@ def update_file_tracking(cursor, conn, file_name, table_name, modified_time):
     try:
         cursor.execute(
             """UPDATE tb_rastreamento_arquivos 
-               SET ultima_modificacao = ?, ultimo_processamento = GETDATE() 
+               SET ultima_modificacao = ?, ultimo_processamento = datetime('now') 
                WHERE nome_arquivo = ?""",
             (modified_time, file_name),
         )
@@ -156,18 +157,26 @@ def update_file_tracking(cursor, conn, file_name, table_name, modified_time):
 
 
 def get_identity_column(cursor, table_name):
-    """Obtém o nome da coluna IDENTITY de uma tabela."""
+    """Obtém o nome da coluna IDENTITY de uma tabela (SQLite usa AUTOINCREMENT)."""
     try:
-        query = """
-        SELECT COLUMN_NAME
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = ? AND COLUMNPROPERTY(OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME), COLUMN_NAME, 'IsIdentity') = 1
-        """
-        cursor.execute(query, (table_name,))
-        result = cursor.fetchone()
-        identity_col = result[0] if result else None
-        logger.info(f"Coluna IDENTITY da tabela {table_name}: {identity_col}")
-        return identity_col
+        # SQLite usa PRAGMA table_info para obter informações da coluna
+        query = f"PRAGMA table_info({table_name})"
+        cursor.execute(query)
+        columns = cursor.fetchall()
+
+        # Procura pela coluna PRIMARY KEY com AUTOINCREMENT (pk=1)
+        for col in columns:
+            if col[5] == 1:  # col[5] is the 'pk' field
+                identity_col = col[1]  # col[1] is the column name
+                logger.info(
+                    f"Coluna IDENTITY da tabela {table_name}: {identity_col}"
+                )
+                return identity_col
+
+        logger.info(
+            f"Nenhuma coluna IDENTITY encontrada na tabela {table_name}"
+        )
+        return None
     except Exception as e:
         logger.error(
             f"Erro ao obter coluna IDENTITY da tabela {table_name}: {e}"
@@ -288,26 +297,23 @@ def process_ordens_rv(cursor, conn, df, file_modified_time):
 
         # Cria tabela se não existir
         create_table_query = """
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_ordens_rv')
-        BEGIN
-            CREATE TABLE tb_ordens_rv (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                codigo_cliente INT NULL,
-                suitability INT NULL,
-                codigo_assessor INT NULL,
-                matriz VARCHAR(100) NULL,
-                ticker VARCHAR(50) NULL,
-                quantidade INT NULL,
-                receita_corretagem DECIMAL(18, 4) NULL,
-                volume DECIMAL(18, 4) NULL,
-                tipo_produto VARCHAR(100) NULL,
-                canal VARCHAR(100) NULL,
-                tipo_corretagem VARCHAR(100) NULL,
-                mercado VARCHAR(100) NULL,
-                lado VARCHAR(50) NULL,
-                data_ordem DATE NULL
-            )
-        END
+        CREATE TABLE IF NOT EXISTS tb_ordens_rv (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo_cliente INTEGER,
+            suitability INTEGER,
+            codigo_assessor INTEGER,
+            matriz TEXT,
+            ticker TEXT,
+            quantidade INTEGER,
+            receita_corretagem REAL,
+            volume REAL,
+            tipo_produto TEXT,
+            canal TEXT,
+            tipo_corretagem TEXT,
+            mercado TEXT,
+            lado TEXT,
+            data_ordem TEXT
+        )
         """
         cursor.execute(create_table_query)
         conn.commit()
