@@ -261,7 +261,7 @@ def process_saldo(cursor, conn, df, file_modified_time):
             "D+1": "d1",
             "D+2": "d2",
             "D+3": "d3",
-            "Total": "saldo_total"
+            "Total": "saldo_total",
         }
 
         # Aplica transformações de dados
@@ -286,90 +286,35 @@ def process_saldo(cursor, conn, df, file_modified_time):
                         .astype(str)
                         .apply(lambda x: f"A{x}" if pd.notnull(x) else x)
                     )
-                elif db_col in [
-                    "data_cadastro",
-                    "data_nascimento",
-                    "data_posicao",
-                    "data_atualizacao",
-                ]:
-                    # Converte data serial do Excel para datetime
-                    def convert_excel_date(value):
-                        if pd.isna(value):
-                            return None
-                        try:
-                            if isinstance(value, (int, float)):
-                                # Época do Excel é 1899-12-31, adiciona o número serial como dias
-                                excel_epoch = datetime.datetime(1899, 12, 31)
-                                return excel_epoch + datetime.timedelta(
-                                    days=value
-                                )
-                            else:
-                                # Se já é datetime ou string, tenta fazer parse
-                                return pd.to_datetime(value, errors="coerce")
-                        except Exception:
-                            return None
-
-                    df[file_col] = df[file_col].apply(convert_excel_date)
 
         # Renomeia colunas para corresponder ao esquema do banco de dados
         df = df.rename(columns=column_mapping)
 
+        # Adiciona coluna data_saldo
+        data_saldo = SaldoConfig.interpret_file_name("saldo.xlsx")
+        df["data_saldo"] = data_saldo
+
         # Cria tabela se não existir
         create_table_query = """
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_positivador')
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'tb_saldo')
         BEGIN
-            CREATE TABLE tb_positivador (
+            CREATE TABLE tb_saldo (
                 id INT IDENTITY(1,1) PRIMARY KEY,
-                codigo_assessor VARCHAR(50),
                 codigo_cliente INT,
-                profissao VARCHAR(100),
-                sexo VARCHAR(10),
-                segmento VARCHAR(50),
-                data_cadastro DATETIME,
-                fez_segundo_aporte VARCHAR(5),
-                data_nascimento DATETIME,
-                status VARCHAR(20),
-                ativou_em_m VARCHAR(5),
-                evadiu_em_m VARCHAR(5),
-                operou_bolsa VARCHAR(5),
-                operou_fundo VARCHAR(5),
-                operou_renda_fixa VARCHAR(5),
-                aplicacao_financeira_declarada_ajustada FLOAT,
-                receita_no_mes FLOAT,
-                receita_bovespa FLOAT,
-                receita_futuros FLOAT,
-                receita_rf_bancarios FLOAT,
-                receita_rf_privados FLOAT,
-                receita_rf_publicos FLOAT,
-                captacao_bruta_em_m FLOAT,
-                resgate_em_m FLOAT,
-                captacao_liquida_em_m FLOAT,
-                captacao_ted FLOAT,
-                captacao_st FLOAT,
-                captacao_ota FLOAT,
-                captacao_rf FLOAT,
-                captacao_td FLOAT,
-                captacao_prev FLOAT,
-                net_em_m_1 FLOAT,
-                net_em_m FLOAT,
-                net_renda_fixa FLOAT,
-                net_fundos_imobiliarios FLOAT,
-                net_renda_variavel FLOAT,
-                net_fundos FLOAT,
-                net_financeiro FLOAT,
-                net_previdencia FLOAT,
-                net_outros FLOAT,
-                receita_aluguel FLOAT,
-                receita_complemento_pacote_corretagem FLOAT,
-                tipo_pessoa VARCHAR(100),
-                data_posicao DATETIME,
-                data_atualizacao DATETIME
+                nome_cliente NVARCHAR(255),
+                codigo_assessor NVARCHAR(50),
+                d0 DECIMAL(18,2),
+                d1 DECIMAL(18,2),
+                d2 DECIMAL(18,2),
+                d3 DECIMAL(18,2),
+                saldo_total DECIMAL(18,2),
+                data_saldo DATETIME
             )
         END
         """
         cursor.execute(create_table_query)
         conn.commit()
-        logger.info("Tabela tb_positivador criada/verificada com sucesso.")
+        logger.info("Tabela tb_saldo criada/verificada com sucesso.")
 
         # Limpa apenas os dados do mês atual antes de inserir novos dados
         if not delete_non_finished_data(cursor, conn):
@@ -392,7 +337,7 @@ def process_saldo(cursor, conn, df, file_modified_time):
 
             if columns:
                 insert_query = f"""
-                INSERT INTO tb_positivador ({", ".join(columns)})
+                INSERT INTO tb_saldo ({", ".join(columns)})
                 VALUES ({", ".join(placeholders)})
                 """
                 cursor.execute(insert_query, values)
@@ -400,12 +345,12 @@ def process_saldo(cursor, conn, df, file_modified_time):
 
         conn.commit()
         logger.info(
-            f"Processamento do relatório positivador concluído: {records_inserted} registros inseridos."
+            f"Processamento do relatório de saldo concluído: {records_inserted} registros inseridos."
         )
         return True
 
     except Exception as e:
-        logger.error(f"Erro ao processar relatório positivador: {e}")
+        logger.error(f"Erro ao processar relatório de saldo: {e}")
         conn.rollback()
         return False
 
