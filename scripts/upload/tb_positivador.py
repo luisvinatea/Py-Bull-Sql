@@ -152,8 +152,8 @@ def update_file_tracking(cursor, conn, file_name, table_name, modified_time):
 
         if cursor.rowcount == 0:
             cursor.execute(
-                """INSERT INTO tb_rastreamento_arquivos (nome_arquivo, nome_tabela, ultima_modificacao) 
-                   VALUES (?, ?, ?)""",
+                """INSERT INTO tb_rastreamento_arquivos (nome_arquivo, nome_tabela, ultima_modificacao, ultimo_processamento) 
+                   VALUES (?, ?, ?, datetime('now'))""",
                 (file_name, table_name, modified_time),
             )
 
@@ -246,7 +246,11 @@ def delete_non_finished_data(cursor, conn):
             WHERE data_posicao >= ? AND data_posicao < ?
         """
 
-        cursor.execute(delete_query, (previous_month_start, next_month))
+        # Converter datetime para string format para comparação no SQLite
+        previous_month_str = previous_month_start.strftime("%Y-%m-%d %H:%M:%S")
+        next_month_str = next_month.strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute(delete_query, (previous_month_str, next_month_str))
         deleted_count = cursor.rowcount
         conn.commit()
 
