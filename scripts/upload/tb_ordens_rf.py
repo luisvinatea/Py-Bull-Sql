@@ -198,14 +198,23 @@ def get_identity_column(cursor, table_name):
         return None
 
 
-def delete_non_finished_data(cursor, conn):
+def delete_non_finished_data(cursor, conn, reference_date):
     """Se data dos dados for diferente do fechamento do mês atual, substituímos os dados do mês atual. Como os relatórios são extraídos em D+2, pode acontecer de no começo do mês termos dados do mês anterior, especificamente se estivermos nos primeiros dois dias úteis do mês. Nesse caso, continuamos atualizando o mês anterior. Uma vez que os dados do mês anterior são finalizados, começamos anexando os dados do mês atual e assim sucessivamente."""
     try:
-        current_date = datetime.datetime.now()
+        current_date = reference_date
 
-        # Calcular próximo mês
+        # Calcular início do mês atual (mês da data de referência)
+        current_month_start = current_date.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+        # Calcular início do próximo mês
         if current_date.month == 12:
-            next_month = current_date.replace(
+            next_month_start = current_date.replace(
                 year=current_date.year + 1,
                 month=1,
                 day=1,
@@ -215,29 +224,8 @@ def delete_non_finished_data(cursor, conn):
                 microsecond=0,
             )
         else:
-            next_month = current_date.replace(
+            next_month_start = current_date.replace(
                 month=current_date.month + 1,
-                day=1,
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-
-        # Calcular início do mês anterior
-        if current_date.month == 1:
-            previous_month_start = current_date.replace(
-                year=current_date.year - 1,
-                month=12,
-                day=1,
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-        else:
-            previous_month_start = current_date.replace(
-                month=current_date.month - 1,
                 day=1,
                 hour=0,
                 minute=0,
@@ -250,11 +238,11 @@ def delete_non_finished_data(cursor, conn):
             WHERE data_ordem >= ? AND data_ordem < ?
         """
 
-        # Converte datetime para string para comparação no SQLite
-        previous_month_str = previous_month_start.strftime("%Y-%m-%d %H:%M:%S")
-        next_month_str = next_month.strftime("%Y-%m-%d %H:%M:%S")
+        # Converte datetime para string para comparação no SQLite (formato YYYY-MM-DD)
+        current_month_str = current_month_start.strftime("%Y-%m-%d")
+        next_month_str = next_month_start.strftime("%Y-%m-%d")
 
-        cursor.execute(delete_query, (previous_month_str, next_month_str))
+        cursor.execute(delete_query, (current_month_str, next_month_str))
         deleted_count = cursor.rowcount
         conn.commit()
 
@@ -271,6 +259,19 @@ def delete_non_finished_data(cursor, conn):
 def process_ordens_rf(cursor, conn, df, file_modified_time):
     """Processa dados do arquivo ordends_rf.xlsx."""
     try:
+        # Filtra linhas indesejadas no final (linhas onde 'Data' não é uma data válida ou é nula)
+        # Remove linhas onde a coluna 'Data' contém strings como 'Total', 'Nenhum filtro aplicado', etc.
+        df = df[df["Data"].notna()]  # Remove null dates
+        df = df[
+            ~df["Data"]
+            .astype(str)
+            .str.contains(
+                "Total|Nenhum Filtro Aplicado|Filtros Aplicados",
+                case=False,
+                na=False,
+            )
+        ]
+
         column_mapping = {
             "Data": "data_ordem",
             "Cód. assessor": "codigo_assessor",
@@ -290,6 +291,67 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
             "Taxa TMR": "taxa_tmr",
         }
 
+        # Converte a coluna Data para datetime primeiro para filtrar por mês
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+
+        # Remove linhas com datas inválidas
+        df = df[df["Data"].notna()]
+
+        # Pega a data mais recente no arquivo para determinar o mês não concluído
+        max_date_in_file = df["Data"].max()
+
+        if pd.isna(max_date_in_file):
+            logger.error(
+                "Não foi possível determinar a data mais recente no arquivo."
+            )
+            return False
+
+        # Converte para datetime do Python
+        reference_date = pd.to_datetime(max_date_in_file).to_pydatetime()
+
+        logger.info(f"Data mais recente no arquivo: {reference_date.date()}")
+
+        # Calcular início do mês atual (mês da data de referência)
+        current_month_start = reference_date.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+        # Calcular início do próximo mês
+        if reference_date.month == 12:
+            next_month_start = reference_date.replace(
+                year=reference_date.year + 1,
+                month=1,
+                day=1,
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+        else:
+            next_month_start = reference_date.replace(
+                month=reference_date.month + 1,
+                day=1,
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+        # Filtra o DataFrame para incluir apenas registros do mês não concluído
+        # ANTES de fazer outras transformações
+        df = df[
+            (df["Data"] >= current_month_start)
+            & (df["Data"] < next_month_start)
+        ]
+
+        logger.info(
+            f"Filtrando dados para o período não concluído: {current_month_start.date()} a {next_month_start.date()} ({len(df)} registros)"
+        )
+
         # Aplica transformações de dados
         for file_col, db_col in column_mapping.items():
             if file_col in df.columns:
@@ -308,9 +370,26 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
                         df[file_col], errors="coerce"
                     ).astype("Int64")
                 elif db_col in ["data_ordem", "data_vencimento"]:
-                    df[file_col] = pd.to_datetime(
-                        df[file_col], errors="coerce"
-                    ).dt.date
+                    # Data já foi convertida, apenas converter para date
+                    if db_col == "data_ordem":
+                        df[file_col] = df[file_col].dt.date
+                    else:
+                        df[file_col] = pd.to_datetime(
+                            df[file_col], errors="coerce"
+                        ).dt.date
+                elif db_col in ["taxa_cliente", "taxa_tmr"]:
+                    # remove % e converte para numerico
+                    df[file_col] = (
+                        df[file_col]
+                        .astype(str)
+                        .str.replace("%", "", regex=False)
+                        .str.replace(".", "", regex=False)
+                        .str.replace(",", ".", regex=False)
+                    )
+                    df[file_col] = pd.to_numeric(df[file_col], errors="coerce")
+                    df[file_col] = (
+                        df[file_col] / 100.0
+                    )  # Converte para decimal
 
         # Renomeia colunas para corresponder ao esquema do banco de dados
         df = df.rename(columns=column_mapping)
@@ -341,8 +420,8 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
         conn.commit()
         logger.info("Tabela tb_ordens_rf criada/verificada com sucesso.")
 
-        # Limpa apenas os dados do mês atual antes de inserir novos dados
-        if not delete_non_finished_data(cursor, conn):
+        # Limpa apenas os dados do mês não concluído antes de inserir novos dados
+        if not delete_non_finished_data(cursor, conn, reference_date):
             return False
 
         # Prepara dados para inserção
@@ -364,6 +443,9 @@ def process_ordens_rf(cursor, conn, df, file_modified_time):
                         values.append(None)
                     elif isinstance(value, (pd.Timestamp, datetime.datetime)):
                         values.append(value.strftime("%Y-%m-%d %H:%M:%S"))
+                    elif isinstance(value, datetime.date):
+                        # Converte date para string no formato YYYY-MM-DD
+                        values.append(value.strftime("%Y-%m-%d"))
                     else:
                         values.append(value)
 
