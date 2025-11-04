@@ -561,7 +561,7 @@ CREATE INDEX IF NOT EXISTS idx_tb_saldo_data_saldo ON tb_saldo (data_saldo);
 notebooks\insights.ipynb
 ```
 
-![notebooks\newplot.png](notebooks\newplot.png)
+![notebooks/newplot.png](notebooks/newplot.png)
 
 #### Script de Backup Automático
 
