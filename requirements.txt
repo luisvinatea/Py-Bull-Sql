@@ -60,7 +60,7 @@ seaborn==0.13.2
 scipy==1.11.4
 
 # Machine Learning
-scikit-learn==1.3.2
+scikit-learn==1.5.0
 xgboost==1.7.6
 
 # Manipulação de caminhos (incluído no Python 3.4+ mas especificado para clareza)
